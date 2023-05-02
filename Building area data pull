@@ -1,0 +1,203 @@
+import json
+import PyPDF2
+import re
+import os
+
+
+class PDFScraper:
+
+    @staticmethod
+    def read_space_input(filename):
+        print(f'Starting to read: {filename}')
+
+        f = open(filename, mode='rb')
+        pdf = PyPDF2.PdfReader(f)
+
+        page_texts = []
+        page_count = 0
+        while page_count < len(pdf.pages) - 1:
+            print(f"Reading page no: {page_count + 1}")
+
+            if page_count == 0:
+                current_page = pdf.pages[page_count].extract_text()
+                next_page = pdf.pages[page_count + 1].extract_text()
+            else:
+                current_page = next_page
+                next_page = pdf.pages[page_count + 1].extract_text()
+
+            if 'General Details' in current_page and 'General Details' in next_page:
+                page_texts.append(current_page.splitlines())
+
+                if page_count == len(pdf.pages) - 2:
+                    page_texts.append(next_page.splitlines())
+
+            elif 'General Details' in current_page and 'General Details' not in next_page:
+                page_texts.append(current_page.splitlines() + next_page.splitlines())
+
+            page_count += 1
+
+        print(f'Completed reading {filename}')
+
+        return page_texts
+
+
+
+    @staticmethod
+    def scrape_space_input(page_texts):
+        all_info = []
+
+        for text in page_texts:
+            info = {
+                'title': '',
+                'building_choice_text': 'NONE',
+                'building_choice_index': 'NONE',
+                'floor_area': '',
+                'walls_info': '',
+                'roof': '',
+                'floor': ''
+            }
+
+            start = 0
+            end = 0
+            no_walls = False
+
+            for i in range(len(text) - 1):
+                if 'General Details' in text[i + 1]:
+                    building_desc = text[i].strip()
+                    floor_area_text = text[i + 2]
+                    floor_area = re.search(r'\d+', floor_area_text).group(0)
+                    info['title'] = building_desc
+                    info['floor_area'] = floor_area
+
+            for i in range(len(text) - 2):
+                if 'walls, windows, doors' in text[i].lower():
+                    if 'exp' in text[i + 1].lower():
+                        start = i + 2
+                    else:
+                        no_walls = True
+
+                if text[i].startswith('3.1') or text[i].startswith('4'):
+                    if start != 0:
+                        end = i
+                        break
+
+            if not no_walls:
+                table_lines = text[start:end]
+                table_lines = list(map(lambda x: x.split()[1:], table_lines))
+                converted_to_int = []
+                for line in table_lines:
+                    int_line = list(map(lambda x: int(float(x)), line))
+                    converted_to_int.append(int_line)
+
+                table_lines = converted_to_int
+
+
+
+            else:
+                table_lines = []
+
+            info['walls_info'] = table_lines
+
+            for i in range(len(text) - 1):
+                if 'Roofs, Skylights' in text[i]:
+                    if 'No Roof or Skylight data' not in text[i + 1]:
+                        info['roof'] = text[i + 2].split()[1]
+                        break
+
+            for i in range(len(text) - 1):
+                if '6. Floors:' in text[i] and 'No additional input required for this floor type' not in text[i + 2]:
+                    floor_text = text[i + 4].strip()
+                    try:
+                        floor_value = re.search(r'\d+.\d+', floor_text).group(0)
+                        info['floor'] = floor_value
+                        break
+                    except:
+                        info['floor'] = ''
+
+            all_info.append(info)
+
+        return all_info
+
+
+
+    @staticmethod
+    def read_window_input(filename):
+        print(f'Reading {filename}')
+        f = open(filename, mode='rb')
+        pdf = PyPDF2.PdfReader(f)
+        text = pdf.pages[0].extract_text().splitlines()
+        print(f'Completed reading {filename}')
+        return text
+
+
+
+    @staticmethod
+    def scrape_window_input(text):
+
+        windows = []
+
+        for i in range(len(text)):
+            if 'Height' in text[i]:
+                height = float(re.search(r'\d+.\d+', text[i]).group(0))
+                width = float(re.search(r'\d+.\d+', text[i + 1]).group(0))
+                info = {
+                    'height': height,
+                    'width': width,
+                    'area': height * width
+                }
+                windows.append(info)
+
+
+        remaining = 2 - len(windows)
+
+        while remaining > 0:
+            info = {
+                'height': 1,
+                'width': 1,
+                'area': 1
+            }
+            windows.append(info)
+            remaining -= 1
+
+
+        return windows
+
+
+
+    @staticmethod
+    def main(space_input_filename, window_filename, output_filename):
+        space_input_text = PDFScraper.read_space_input(space_input_filename)
+        window_text = PDFScraper.read_window_input(window_filename)
+
+        print('Now extracting information from the pdf')
+        input_info = PDFScraper.scrape_space_input(space_input_text)
+        window_info = PDFScraper.scrape_window_input(window_text)
+        print('Done extracting information from the pdf')
+
+        complete_info = {
+            'window': window_info,
+            'space_input': input_info
+        }
+
+        with open(output_filename, mode='w') as f:
+            json.dump(complete_info, f, indent=4)
+
+        print(f'Scraped information saved in: {output_filename}')
+
+
+
+if __name__ == '__main__':
+    files = os.listdir()
+    space_input_filename = None
+    window_filename = None
+    output_filename = 'output.json'
+    for f in files:
+        if 'space input' in f.lower():
+            space_input_filename = f
+
+        elif 'window' in f.lower():
+            window_filename = f
+
+
+    PDFScraper.main(space_input_filename, window_filename, output_filename)
+
